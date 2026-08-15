@@ -5,7 +5,7 @@ namespace App\Services\Api;
 use App\Models\Site;
 
 /**
- * Client for the companion plugin's `tec-scanner/v1` REST API.
+ * Client for the companion plugin's `event-ticket-scanner/v1` REST API.
  * The contract lives in docs/api/openapi.yaml — every array shape returned
  * here mirrors that spec verbatim.
  *

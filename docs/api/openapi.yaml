@@ -2,16 +2,16 @@ openapi: 3.1.0
 info:
   title: TEC Scanner Companion API
   description: |
-    REST API exposed by the `tec-scanner-companion` WordPress plugin (namespace `tec-scanner/v1`)
+    REST API exposed by the `event-ticket-scanner-companion` WordPress plugin (namespace `event-ticket-scanner/v1`)
     and consumed by the TEC Ticket Scanner mobile app.
 
-    **Base path** on a WordPress site: `{site_url}/wp-json/tec-scanner/v1`
+    **Base path** on a WordPress site: `{site_url}/wp-json/event-ticket-scanner/v1`
 
     **Authentication**: HTTP Basic auth using a WordPress **Application Password**
     (username + application password). HTTPS is required; the plugin rejects plain-HTTP
     requests unless a local-dev filter overrides it. Every route requires the custom
-    capability `tec_scanner_checkin` (granted to `administrator` and `editor` on plugin
-    activation, filterable via `tec_scanner_checkin_roles`).
+    capability `event_ticket_scanner_checkin` (granted to `administrator` and `editor` on plugin
+    activation, filterable via `event_ticket_scanner_checkin_roles`).
 
     **Provider normalization**: attendees come from multiple Event Tickets providers
     (Tickets Commerce `tec_tc_attendee`, RSVP `tribe_rsvp_attendees`, ET+ WooCommerce
@@ -27,7 +27,7 @@ info:
     name: GPL-2.0-or-later
     identifier: GPL-2.0-or-later
 servers:
-  - url: https://example.test/wp-json/tec-scanner/v1
+  - url: https://example.test/wp-json/event-ticket-scanner/v1
 security:
   - applicationPassword: []
 tags:
@@ -64,6 +64,8 @@ paths:
                   display_name: Door Staff
                 capabilities:
                   can_checkin: true
+                  scan_all_events: false
+                assigned_event_ids: [501]
                 plugin_version: 1.0.0
                 event_tickets_version: 5.29.2.1
                 providers: [tickets-commerce, rsvp]
@@ -76,6 +78,10 @@ paths:
       operationId: listEvents
       tags: [events]
       summary: List ticketable events with attendee counts
+      description: >
+        Scoped to the authenticated account: unrestricted users get every event,
+        restricted users get only the events assigned to them (directly or through
+        a linked Organizer). A restricted user with no assignments gets an empty list.
       parameters:
         - name: upcoming
           in: query
@@ -252,7 +258,7 @@ paths:
       description: |
         Unauthenticated by design — the single-use token IS the credential.
         An admin generates a QR in wp-admin (Tickets → Scanner App) containing
-        `{v, type: "tec-scanner-pair", url, user, token}`; the app scans it and
+        `{v, type: "event-ticket-scanner-pair", url, user, token}`; the app scans it and
         POSTs the token here within its 5-minute lifetime. The server consumes
         the token (single use, stored hashed) and mints a fresh WordPress
         Application Password named after the device, tied to the admin who
@@ -292,7 +298,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-              example: { code: tec_scanner_invalid_token, message: This pairing code is invalid or has expired. Generate a fresh one in wp-admin., data: { status: 403 } }
+              example: { code: event_ticket_scanner_invalid_token, message: This pairing code is invalid or has expired. Generate a fresh one in wp-admin., data: { status: 403 } }
         '429':
           description: Too many pairing attempts from this IP.
           content:
@@ -369,17 +375,20 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
           example: { code: rest_not_logged_in, message: You are not currently logged in., data: { status: 401 } }
     Forbidden:
-      description: Authenticated but lacks the `tec_scanner_checkin` capability, or HTTP (non-SSL) request.
+      description: >
+        Authenticated but lacks the `event_ticket_scanner_checkin` capability
+        (`event_ticket_scanner_forbidden`), not assigned to the requested event
+        (`event_ticket_scanner_event_forbidden`), or an HTTP (non-SSL) request.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
-          example: { code: tec_scanner_forbidden, message: You are not allowed to manage check-ins on this site., data: { status: 403 } }
+          example: { code: event_ticket_scanner_forbidden, message: You are not allowed to manage check-ins on this site., data: { status: 403 } }
     NotFound:
       description: Event not found or has no tickets.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
-          example: { code: tec_scanner_event_not_found, message: Event not found., data: { status: 404 } }
+          example: { code: event_ticket_scanner_event_not_found, message: Event not found., data: { status: 404 } }
     BadRequest:
       description: Malformed request body.
       content:
@@ -405,6 +414,22 @@ components:
           required: [can_checkin]
           properties:
             can_checkin: { type: boolean }
+            scan_all_events:
+              type: boolean
+              description: >
+                True when the account may scan every event on the site (administrators,
+                editors). False when it is restricted to `assigned_event_ids`.
+                Absent on plugin versions before 1.1.0 — treat as true.
+        assigned_event_ids:
+          type: [array, 'null']
+          description: >
+            The only events this account may read or check attendees into. `null`
+            means unrestricted (see `capabilities.scan_all_events`); an empty array
+            means the account is assigned to nothing and will see no events.
+            Scope is the union of per-user assignments and events belonging to an
+            Organizer linked to this user. Advisory for the client — the server
+            enforces it on every endpoint. Absent before plugin 1.1.0.
+          items: { type: integer }
         plugin_version: { type: string }
         event_tickets_version: { type: string }
         providers:
@@ -486,7 +511,9 @@ components:
             `ok` — applied. `already_checked_in` — checkin op on an attendee someone else
             already checked in (success-with-info; reconcile from `attendee`).
             `not_checked_in` — uncheckin op on an attendee who wasn't checked in.
-            `not_found` — unknown attendee id. `not_authorized` — order status not completed.
+            `not_found` — unknown attendee id. `not_authorized` — order status not completed,
+            or the operator is not assigned to this attendee's event (retryable: the
+            server does not cache this outcome against the `op_id`).
             `error` — server-side failure applying this op (safe to retry with same op_id).
         message: { type: string, description: Human-readable detail for non-ok statuses. }
         attendee:

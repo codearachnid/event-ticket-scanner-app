@@ -36,7 +36,7 @@ $lastNames = ['Lovelace', 'Hopper', 'Turing', 'Dijkstra', 'Liskov', 'Knuth', 'Pe
 /** Deterministic 8-hex security code per attendee id (mirrors ET's 8-char codes). */
 function securityCode(int $attendeeId): string
 {
-    return substr(md5('tec-scanner-fixture-'.$attendeeId), 0, 8);
+    return substr(md5('event-ticket-scanner-fixture-'.$attendeeId), 0, 8);
 }
 
 $attendees = [];
@@ -102,7 +102,8 @@ $fixtures = [
         'site_name' => 'Fixture Fest Productions',
         'site_url' => SITE_URL,
         'user' => ['id' => 2, 'login' => 'doorstaff', 'display_name' => 'Door Staff'],
-        'capabilities' => ['can_checkin' => true],
+        'capabilities' => ['can_checkin' => true, 'scan_all_events' => false],
+        'assigned_event_ids' => [EVENT_ID],
         'plugin_version' => '1.0.0',
         'event_tickets_version' => '5.29.2.1',
         'providers' => ['tickets-commerce', 'rsvp'],

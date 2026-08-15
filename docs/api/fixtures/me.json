@@ -7,8 +7,12 @@
         "display_name": "Door Staff"
     },
     "capabilities": {
-        "can_checkin": true
+        "can_checkin": true,
+        "scan_all_events": false
     },
+    "assigned_event_ids": [
+        501
+    ],
     "plugin_version": "1.0.0",
     "event_tickets_version": "5.29.2.1",
     "providers": [
