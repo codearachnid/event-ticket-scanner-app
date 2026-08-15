@@ -1,0 +1,525 @@
+openapi: 3.1.0
+info:
+  title: TEC Scanner Companion API
+  description: |
+    REST API exposed by the `tec-scanner-companion` WordPress plugin (namespace `tec-scanner/v1`)
+    and consumed by the TEC Ticket Scanner mobile app.
+
+    **Base path** on a WordPress site: `{site_url}/wp-json/tec-scanner/v1`
+
+    **Authentication**: HTTP Basic auth using a WordPress **Application Password**
+    (username + application password). HTTPS is required; the plugin rejects plain-HTTP
+    requests unless a local-dev filter overrides it. Every route requires the custom
+    capability `tec_scanner_checkin` (granted to `administrator` and `editor` on plugin
+    activation, filterable via `tec_scanner_checkin_roles`).
+
+    **Provider normalization**: attendees come from multiple Event Tickets providers
+    (Tickets Commerce `tec_tc_attendee`, RSVP `tribe_rsvp_attendees`, ET+ WooCommerce
+    `tribe_wooticket`). The plugin normalizes them to the single `Attendee` shape below.
+    RSVP "going = yes" maps to `order_status: completed`; "going = no" maps to `denied`.
+
+    **Delta sync**: `GET /events/{id}/attendees` accepts `updated_since`. The server
+    tracks attendee modification times in its own touch index (check-ins do not bump
+    `post_modified` in WordPress). Clients MUST use the `server_time` echoed in each
+    attendee response as the next `updated_since` cursor — never device time.
+  version: 1.0.0
+  license:
+    name: GPL-2.0-or-later
+    identifier: GPL-2.0-or-later
+servers:
+  - url: https://example.test/wp-json/tec-scanner/v1
+security:
+  - applicationPassword: []
+tags:
+  - name: pairing
+    description: Site connection and credential validation.
+  - name: events
+    description: Ticketable events and check-in statistics.
+  - name: attendees
+    description: Attendee sync (full and delta).
+  - name: checkins
+    description: Batched, idempotent check-in and un-check-in operations.
+paths:
+  /me:
+    get:
+      operationId: getMe
+      tags: [pairing]
+      summary: Validate credentials and report site capabilities
+      description: >
+        Called at pairing time (and periodically) to verify the site URL, credentials,
+        plugin presence, and that the authenticated user can check attendees in.
+      responses:
+        '200':
+          description: Authenticated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+              example:
+                site_name: Fixture Fest Productions
+                site_url: https://example.test
+                user:
+                  id: 2
+                  login: doorstaff
+                  display_name: Door Staff
+                capabilities:
+                  can_checkin: true
+                plugin_version: 1.0.0
+                event_tickets_version: 5.29.2.1
+                providers: [tickets-commerce, rsvp]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /events:
+    get:
+      operationId: listEvents
+      tags: [events]
+      summary: List ticketable events with attendee counts
+      parameters:
+        - name: upcoming
+          in: query
+          description: When 1 (default), only events whose end date is in the future (with a small grace window). Pass 0 for all events.
+          schema: { type: integer, enum: [0, 1], default: 1 }
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: Paginated events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, total, page, per_page, has_more]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/Event' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  per_page: { type: integer }
+                  has_more: { type: boolean }
+              example:
+                events:
+                  - id: 501
+                    title: Fixture Fest 2026
+                    start_date: '2026-09-12T18:00:00'
+                    end_date: '2026-09-12T23:00:00'
+                    timezone: America/Chicago
+                    venue: The Grand Hall
+                    attendee_count: 50
+                    checked_in_count: 14
+                total: 1
+                page: 1
+                per_page: 50
+                has_more: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /events/{event_id}/attendees:
+    get:
+      operationId: listAttendees
+      tags: [attendees]
+      summary: List attendees for an event (full or delta sync)
+      parameters:
+        - $ref: '#/components/parameters/event_id'
+        - name: updated_since
+          in: query
+          description: >
+            ISO-8601 UTC timestamp. Only attendees created/modified/checked-in/un-checked-in
+            (per the plugin's touch index) after this instant are returned. Omit for a full sync.
+            Always pass the `server_time` from the previous response.
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: Paginated attendees plus the server clock for cursor continuation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attendees, total, page, per_page, has_more, server_time]
+                properties:
+                  attendees:
+                    type: array
+                    items: { $ref: '#/components/schemas/Attendee' }
+                  total:
+                    type: integer
+                    description: Total attendees matching this query (after updated_since filter).
+                  page: { type: integer }
+                  per_page: { type: integer }
+                  has_more: { type: boolean }
+                  server_time:
+                    type: string
+                    format: date-time
+                    description: Server UTC time when the page was generated. Use as the next `updated_since`.
+              example:
+                attendees:
+                  - id: 9001
+                    event_id: 501
+                    ticket_id: 701
+                    ticket_name: General Admission
+                    provider: tickets-commerce
+                    holder_name: Ada Lovelace
+                    holder_email: ada@example.test
+                    security_code: 3f9a1c2e
+                    order_status: completed
+                    checked_in: false
+                    checked_in_at: null
+                    checked_in_by: null
+                    updated_at: '2026-08-01T15:04:05Z'
+                total: 1
+                page: 1
+                per_page: 100
+                has_more: false
+                server_time: '2026-08-11T16:20:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /checkins:
+    post:
+      operationId: submitCheckins
+      tags: [checkins]
+      summary: Submit a batch of check-in / un-check-in operations (idempotent)
+      description: |
+        Each operation carries a client-generated UUID `op_id`. The server records processed
+        `op_id`s; resubmitting a batch containing an already-processed `op_id` returns the
+        stored result for it instead of re-applying (safe retries after network failures).
+
+        `already_checked_in` on a `checkin` action is **success-with-info** — another
+        device/user got there first; the response carries current server state so the
+        client can reconcile (show AMBER with who/when).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckinBatch' }
+            example:
+              device_id: tims-iphone-15
+              operations:
+                - op_id: 3b2417e6-6a3f-4a3f-9a0e-6b1a2c3d4e5f
+                  attendee_id: 9001
+                  action: checkin
+                  occurred_at: '2026-09-12T18:03:11Z'
+      responses:
+        '200':
+          description: Per-operation results, in the same order as submitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results, server_time]
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/CheckinResult' }
+                  server_time: { type: string, format: date-time }
+              example:
+                results:
+                  - op_id: 3b2417e6-6a3f-4a3f-9a0e-6b1a2c3d4e5f
+                    status: ok
+                    attendee:
+                      id: 9001
+                      event_id: 501
+                      ticket_id: 701
+                      ticket_name: General Admission
+                      provider: tickets-commerce
+                      holder_name: Ada Lovelace
+                      holder_email: ada@example.test
+                      security_code: 3f9a1c2e
+                      order_status: completed
+                      checked_in: true
+                      checked_in_at: '2026-09-12T18:03:11Z'
+                      checked_in_by: tims-iphone-15
+                      updated_at: '2026-09-12T18:03:12Z'
+                server_time: '2026-09-12T18:03:12Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /pair:
+    post:
+      operationId: pairDevice
+      tags: [pairing]
+      summary: Exchange a scanned pairing token for an Application Password
+      description: |
+        Unauthenticated by design — the single-use token IS the credential.
+        An admin generates a QR in wp-admin (Tickets → Scanner App) containing
+        `{v, type: "tec-scanner-pair", url, user, token}`; the app scans it and
+        POSTs the token here within its 5-minute lifetime. The server consumes
+        the token (single use, stored hashed) and mints a fresh WordPress
+        Application Password named after the device, tied to the admin who
+        generated the QR and revocable from their profile. Rate-limited per IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 20 }
+                device_name: { type: string, maxLength: 100 }
+            example: { token: 317bb01021b1b1114dcaf1f8e59fec88269e9bf5, device_name: Tims iPhone 15 }
+      responses:
+        '200':
+          description: Credentials for the app to store in SecureStorage.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site_name, site_url, username, app_password]
+                properties:
+                  site_name: { type: string }
+                  site_url: { type: string, format: uri }
+                  username: { type: string }
+                  app_password: { type: string }
+              example:
+                site_name: WP Dev
+                site_url: https://wp-dev.test
+                username: doorstaff
+                app_password: 'abcd efgh ijkl mnop abcd efgh'
+        '403':
+          description: Invalid, expired, or already-used token; or non-HTTPS transport.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: tec_scanner_invalid_token, message: This pairing code is invalid or has expired. Generate a fresh one in wp-admin., data: { status: 403 } }
+        '429':
+          description: Too many pairing attempts from this IP.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '501':
+          description: Application passwords unavailable for the pairing user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /events/{event_id}/stats:
+    get:
+      operationId: getStats
+      tags: [events]
+      summary: Check-in stats for an event
+      parameters:
+        - $ref: '#/components/parameters/event_id'
+      responses:
+        '200':
+          description: Server-truth counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+              example:
+                event_id: 501
+                total: 50
+                checked_in: 14
+                by_ticket_type:
+                  - ticket_id: 701
+                    name: General Admission
+                    total: 30
+                    checked_in: 10
+                  - ticket_id: 702
+                    name: VIP
+                    total: 10
+                    checked_in: 3
+                  - ticket_id: 703
+                    name: RSVP
+                    total: 10
+                    checked_in: 1
+                server_time: '2026-08-11T16:20:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    applicationPassword:
+      type: http
+      scheme: basic
+      description: WordPress Application Password (username + generated password).
+  parameters:
+    event_id:
+      name: event_id
+      in: path
+      required: true
+      description: WordPress post ID of the event.
+      schema: { type: integer, minimum: 1 }
+    page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    per_page:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+  responses:
+    Unauthorized:
+      description: Missing/invalid credentials (WP `rest_forbidden` / auth failure).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: rest_not_logged_in, message: You are not currently logged in., data: { status: 401 } }
+    Forbidden:
+      description: Authenticated but lacks the `tec_scanner_checkin` capability, or HTTP (non-SSL) request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: tec_scanner_forbidden, message: You are not allowed to manage check-ins on this site., data: { status: 403 } }
+    NotFound:
+      description: Event not found or has no tickets.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: tec_scanner_event_not_found, message: Event not found., data: { status: 404 } }
+    BadRequest:
+      description: Malformed request body.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: rest_invalid_param, message: 'Invalid parameter(s): operations', data: { status: 400 } }
+  schemas:
+    Me:
+      type: object
+      required: [site_name, site_url, user, capabilities, plugin_version, event_tickets_version, providers]
+      properties:
+        site_name: { type: string }
+        site_url: { type: string, format: uri }
+        user:
+          type: object
+          required: [id, login, display_name]
+          properties:
+            id: { type: integer }
+            login: { type: string }
+            display_name: { type: string }
+        capabilities:
+          type: object
+          required: [can_checkin]
+          properties:
+            can_checkin: { type: boolean }
+        plugin_version: { type: string }
+        event_tickets_version: { type: string }
+        providers:
+          type: array
+          description: Active ticket providers on the site.
+          items: { type: string, enum: [tickets-commerce, rsvp, woocommerce] }
+    Event:
+      type: object
+      required: [id, title, start_date, end_date, timezone, attendee_count, checked_in_count]
+      properties:
+        id: { type: integer, description: WordPress post ID of the event. }
+        title: { type: string }
+        start_date:
+          type: string
+          description: Event-local wall time, ISO-8601 without offset (interpret in `timezone`).
+        end_date: { type: string }
+        timezone: { type: string, description: IANA timezone of the event. }
+        venue: { type: [string, 'null'] }
+        attendee_count: { type: integer }
+        checked_in_count: { type: integer }
+    Attendee:
+      type: object
+      required: [id, event_id, ticket_id, ticket_name, provider, holder_name, holder_email, security_code, order_status, checked_in, checked_in_at, checked_in_by, updated_at]
+      properties:
+        id:
+          type: integer
+          description: WordPress attendee post ID. This is the `ticket_id` query arg inside the ticket QR URL.
+        event_id: { type: integer }
+        ticket_id: { type: integer, description: WordPress post ID of the ticket product/type. }
+        ticket_name: { type: string }
+        provider: { type: string, enum: [tickets-commerce, rsvp, woocommerce] }
+        holder_name: { type: string }
+        holder_email: { type: string }
+        security_code:
+          type: string
+          description: Per-attendee security code; must match the `security_code` in the scanned QR.
+        order_status:
+          type: string
+          enum: [completed, pending, refunded, cancelled, denied]
+          description: Normalized order status. Only `completed` attendees are valid for check-in.
+        checked_in: { type: boolean }
+        checked_in_at: { type: [string, 'null'], format: date-time }
+        checked_in_by:
+          type: [string, 'null']
+          description: Device id or WP user login that performed the check-in, when known.
+        updated_at:
+          type: string
+          format: date-time
+          description: Last modification per the plugin's touch index (UTC).
+    CheckinBatch:
+      type: object
+      required: [device_id, operations]
+      properties:
+        device_id: { type: string, maxLength: 100 }
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [op_id, attendee_id, action, occurred_at]
+            properties:
+              op_id: { type: string, format: uuid, description: Client-generated idempotency key. }
+              attendee_id: { type: integer }
+              action: { type: string, enum: [checkin, uncheckin] }
+              occurred_at:
+                type: string
+                format: date-time
+                description: When the scan/tap happened on-device (UTC). Informational; server clock is authoritative.
+    CheckinResult:
+      type: object
+      required: [op_id, status, attendee]
+      properties:
+        op_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [ok, already_checked_in, not_checked_in, not_found, not_authorized, error]
+          description: >
+            `ok` — applied. `already_checked_in` — checkin op on an attendee someone else
+            already checked in (success-with-info; reconcile from `attendee`).
+            `not_checked_in` — uncheckin op on an attendee who wasn't checked in.
+            `not_found` — unknown attendee id. `not_authorized` — order status not completed.
+            `error` — server-side failure applying this op (safe to retry with same op_id).
+        message: { type: string, description: Human-readable detail for non-ok statuses. }
+        attendee:
+          oneOf:
+            - $ref: '#/components/schemas/Attendee'
+            - type: 'null'
+          description: Current server state after the op (null when `not_found`).
+    Stats:
+      type: object
+      required: [event_id, total, checked_in, by_ticket_type, server_time]
+      properties:
+        event_id: { type: integer }
+        total: { type: integer }
+        checked_in: { type: integer }
+        by_ticket_type:
+          type: array
+          items:
+            type: object
+            required: [ticket_id, name, total, checked_in]
+            properties:
+              ticket_id: { type: integer }
+              name: { type: string }
+              total: { type: integer }
+              checked_in: { type: integer }
+        server_time: { type: string, format: date-time }
+    Error:
+      type: object
+      description: Standard WordPress REST error envelope.
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        data:
+          type: object
+          properties:
+            status: { type: integer }
