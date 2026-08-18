@@ -1,0 +1,37 @@
+# TEC Ticket Scanner — agent orientation
+
+NativePHP for Mobile **v4 (SuperNative)** app for scanning Event Tickets (The Events Calendar) QR codes at the door: instant GREEN / AMBER / RED check-in screens, offline-first.
+
+**Read [PLAN.md](PLAN.md) before doing anything.** It is the approved master build plan: staged, directive, with acceptance criteria and verified facts about NativePHP v4 and Event Tickets internals. Do stages in order; do not re-litigate the decisions table at the top of it.
+
+## Current status
+
+- [x] Stage 1 — API contract (`docs/api/`: openapi.yaml, fixtures, qr-format.md)
+- [~] Stage 0 — NativePHP bootstrap: `nativephp/mobile` 4.1.0 installed, `native:install ios` done, **`native:run` verified on iPhone 17 Pro simulator (iOS 26.5, UDID 535558BC-AE91-4E05-9DC6-9DEDBB9FB5AE) — app boots, Connect screen renders natively.** Sole remainder: premium plugins `nativephp/mobile-scanner` + `nativephp/mobile-secure-storage` — blocked on a VALID Ultra license in `auth.json` (server rejects: "Invalid email or license key"). NOTE: interactive simulator driving via the iOS Simulator panel needs the user to run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`; until then use `xcrun simctl` (launch/screenshot work, tap injection doesn't).
+- [x] Stage 2 — data layer: migrations (sites/events/attendees/checkin_operations), models, `ApiClient` (Fixture + Http), `QrParser`, `ScanValidator`, `CheckinService`, `SyncEngine`, `SyncEventJob`.
+- [x] Stage 3 — EDGE UI shell: `Home` (gate), `ConnectSite`, `EventsIndex`, `EventHome`, `ScanScreen` (Stage 4 placeholder); routes in `routes/web.php`; `nativephp/mobile-ui` v0.4 installed + registered (65 tests green). **Deferred within Stage 3:** site switcher for >1 site (fold into Stage 6 settings) and pairing-QR path on ConnectSite (needs premium Scanner).
+- [x] Stage 4 (logic) — `ScanScreen`: continuous scan, GREEN (auto-dismiss 2s + local checkin + queued op) / AMBER (who/when, tap-dismiss) / RED (reason, tap-dismiss), 3s duplicate-read debounce, result-on-screen read blocking, haptics (`Device.Vibrate`), graceful `unavailable` phase when the native scanner plugin is missing. 78 tests green. **Device verification pending** premium `mobile-scanner` install (license) + simulator runtime; torch-during-scan prototype still open.
+- [x] Stage 5 — `AttendeesIndex` (local search w/ escaped LIKE, in/out filters), `AttendeeDetail` (manual check-in via `CheckinService`, undo behind a native `Dialog::alert` confirm keyed by dialog id), `StatsScreen` (server-truth when online, local fallback offline). Routes: `/events/{e}/attendees`, `/events/{e}/stats`, `/attendees/{a}`. 91 tests green.
+- [ ] Stage 6 — polish: settings screen (manage sites incl. >1-site switcher, device name), empty/error states pass, app icon/splash, `v0.1.0-alpha` tag, full simulator regression (needs simulator runtime)
+- [x] Stage 7 — companion WP plugin **built and smoke-tested** at `/Users/codearachnid/Sites/WordPress/wp-dev/wp-content/plugins/wp-tec-ticket-scanner` (own git repo; has its own CLAUDE.md). All 6 endpoints verified against https://wp-dev.test incl. idempotent check-ins, delta sync via touch index, and the **QR pairing flow** (`POST /pair`, single-use 5-min tokens → Application Passwords; admin page at Tickets → Scanner App). Contract updated here: `/pair` in openapi.yaml + pairing QR v2 in qr-format.md. Remaining: wp-env PHPUnit contract tests.
+- [~] Stage 8 — integration: **headless pass complete** — real `HttpApiClient`+`SyncEngine`+`CheckinService` against https://wp-dev.test (auth, full pull 25, checkin push `ok`, delta pull w/ server attribution, stats). App now defaults `TICKETSCANNER_API=http` (.env; tests pinned to fixture in phpunit.xml). **TLS for *.test sites**: private-CA bundle via `TICKETSCANNER_CA_BUNDLE=certs/herd-ca.pem` (Herd CA copied to `storage/certs/`; on-device PHP curl ignores the OS keychain, so this is required on simulator too). Remaining: on-simulator walkthrough (user types creds; agent tap-injection blocked pending `sudo xcode-select`), app-side `/pair` exchange + pairing-QR scan (blocked on premium Scanner license — NativePHP-side provisioning issue, support contacted), two-device + offline drills from PLAN.md.
+- [ ] Stage 9 — hardening, Android, release
+
+## Hard-won environment facts (don't re-derive)
+
+- v4 bundles ALL facades in core (`vendor/nativephp/mobile/src/Facades/`) incl. Scanner, SecureStorage, Haptics; the standalone `nativephp/mobile-device|network|dialog` packages are **v3-only — never require them** (they force a downgrade to v3). Premium packages are needed only for the native-side implementations.
+- v4 `SecureStorage::get()` returns `string|null` (not v3's `['value' => ...]`); `set()` returns bool. **Builds without the premium plugin register NO `SecureStorage.*` (or `Network.Status`) native bridge functions** (check `nativephp/ios/NativePHP/Bridge/Functions/` after a build) — `SiteCredentials` falls back to Crypt-encrypted `device_secrets` rows (APP_KEY itself is keychain-held by the shell), auto-migrating back to SecureStorage when it becomes available.
+- On this dev machine `nativephp_call()` EXISTS (Jump dev bridge): with no device attached, bridge calls return `{status:"error", code:"NO_DEVICE"}` objects — never assume absence of the function means dev environment; `Connectivity` handles this.
+- `plugins.nativephp.com/packages.json` is public — only dist downloads authenticate. Verify a license with a dist download, not the index.
+- Tests: `php artisan test` (Pest, sqlite :memory:). Style: `./vendor/bin/pint --dirty`.
+- **iOS builds need a UTF-8 locale**: non-interactive shells here have empty `LANG`/`LC_ALL`, which crashes CocoaPods ("Unicode Normalization not appropriate for ASCII-8BIT"). Always run `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 php artisan native:run ios <udid> --no-tty`.
+- EDGE gotchas that already bit us: use `#[On]` NOT `#[OnNative]` (silent no-op without Livewire); there is no `text_input` element — mobile-ui v0.4 ships `outlined_text_input`/`bare_text_input`/`filled_text_input` (`<native:outlined-text-input>`); plugin elements register via `App\Providers\NativeServiceProvider::plugins()` (published stub; also added to bootstrap/providers.php); `button`/`toggle`/`activity-indicator`/`bottom-sheet`/`list`/`modal` come from mobile-ui, core-only elements are column/row/stack/scroll-view/text/icon/image/pressable/refreshable/top-bar/bottom-nav/fab/spacer/divider.
+- The full EDGE cheat-sheet (elements, events, testing API, layout system) lives in the Stage 3 planning transcript; regenerate by reading `vendor/nativephp/mobile/src/Edge/` + `vendor/nativephp/mobile-ui/nativephp.json` (manifest lists every element type).
+
+## Ground rules
+
+- `docs/api/openapi.yaml` is the contract both codebases test against. Change it deliberately; regenerate fixtures with `php docs/api/generate-fixtures.php` (deterministic — commit the output).
+- SQLite migrations must be **additive only** — NativePHP runs migrations on every app launch on end-user devices.
+- Secrets: Ultra license in `auth.json` (gitignored), app passwords only in SecureStorage — never in SQLite, logs, or git.
+- Git: never push or commit without the user asking; no Claude co-author attribution (user's global rule).
+- Lint the spec with `npx @redocly/cli lint docs/api/openapi.yaml`.

@@ -25,3 +25,7 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+/nativephp
+
+# Local dev CA bundles (machine-specific; copy your own, see .env.example)
+resources/certs/

@@ -1,0 +1,26 @@
+{
+    "event_id": 501,
+    "total": 50,
+    "checked_in": 14,
+    "by_ticket_type": [
+        {
+            "ticket_id": 701,
+            "name": "General Admission",
+            "total": 30,
+            "checked_in": 10
+        },
+        {
+            "ticket_id": 702,
+            "name": "VIP",
+            "total": 10,
+            "checked_in": 3
+        },
+        {
+            "ticket_id": 703,
+            "name": "RSVP",
+            "total": 10,
+            "checked_in": 1
+        }
+    ],
+    "server_time": "2026-08-11T16:20:00Z"
+}

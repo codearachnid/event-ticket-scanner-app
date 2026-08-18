@@ -8,7 +8,9 @@
     "require": {
         "php": "^8.3",
         "laravel/framework": "^13.17",
-        "laravel/tinker": "^3.0"
+        "laravel/tinker": "^3.0",
+        "nativephp/mobile": "^4.1",
+        "nativephp/mobile-ui": "^0.4.0"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
@@ -17,6 +19,8 @@
         "laravel/pint": "^1.27",
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.6",
+        "pestphp/pest": "^4.7",
+        "pestphp/pest-plugin-laravel": "^4.1",
         "phpunit/phpunit": "^12.5.12"
     },
     "autoload": {
@@ -82,5 +86,10 @@
         }
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "repositories": [{
+        "name": "nativephp-plugins",
+        "type": "composer",
+        "url": "https://plugins.nativephp.com"
+    }]
 }

@@ -1,0 +1,18 @@
+{
+    "events": [
+        {
+            "id": 501,
+            "title": "Fixture Fest 2026",
+            "start_date": "2026-09-12T18:00:00",
+            "end_date": "2026-09-12T23:00:00",
+            "timezone": "America/Chicago",
+            "venue": "The Grand Hall",
+            "attendee_count": 50,
+            "checked_in_count": 14
+        }
+    ],
+    "total": 1,
+    "page": 1,
+    "per_page": 50,
+    "has_more": false
+}
